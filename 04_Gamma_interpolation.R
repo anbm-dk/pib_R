@@ -195,7 +195,8 @@ plot(pkrig)
 writeRaster(
   pkrig,
   filename = paste0(dir_cov, "Gamma_Countrate.tiff"),
-  overwrite = TRUE
+  overwrite = TRUE,
+  names = "Gamma_Countrate"
 )
 
 tiff(
