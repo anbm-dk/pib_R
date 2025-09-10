@@ -38,6 +38,7 @@ dir_results <- root %>%
   paste0(., "/results/") %T>%
   dir.create()
 
+vars_target <- c("Clay", "Rt", "P", "K")
 
 # Create summary and figures
 
@@ -164,7 +165,10 @@ covobs_list <- list()
 for(i in 1:length(sitenames)) {
   dir_cov <- paste0(dir_dat, sitenames[i], "/covariates/")
   
-  covariates <- dir_cov %>% list.files(".tif", full.names = TRUE) %>% rast()
+  covariates <- dir_cov %>%
+    list.files(".tif", full.names = TRUE) %>%
+    grep(".aux.xml", ., invert=TRUE, value = TRUE) %>%
+    rast()
   
   if (sitenames[i] == "Vindum") {
     obs <- dir_dat %>%
@@ -219,6 +223,8 @@ cor_list2 %>%
   arrange(-mean_2) %>%
   as.data.frame()
 
+# Dualem figure
+
 tiff(
   paste0(dir_results, "/ECa_cor_all4.tiff"),
   width = 12, height = 7.5, units = "cm",
@@ -238,6 +244,31 @@ covobs_list %>%
 try(dev.off())
 try(dev.off())
 
+# Gamma figure
+
+tiff(
+  paste0(dir_results, "/Gamma_cor_all4.tiff"),
+  width = 12, height = 7.5, units = "cm",
+  res = 300
+)
+
+covobs_list %>%
+  bind_rows() %>%
+  ggplot(
+    aes(x = Gamma_Countrate, y = P)
+  ) +
+  geom_point(shape = 21, bg = "white") +
+  facet_wrap(~ Site, scales = "free", nrow = 2) +
+  xlab("Gamma count rate (cps)") +
+  ylab("P (mg/g)")
+
+try(dev.off())
+try(dev.off())
+
+# Prepare loop
+
+source("f_get_weightsdens.R")
+source("f_weighted_summaries.R")
 
 vars_DSM10m <- c("clay_10m", "silt_10m", "coarse_sand_10m", "SOC_10m")
 
@@ -252,7 +283,7 @@ covcor_list <- covobs_list %>%
     function(x) {
       out <- x %>%
         select(any_of(cor_list2$rowname)) %>%
-        select(any_of(vars_TOPO_top10)) %>%
+        # select(any_of(vars_TOPO_top10)) %>%
         select(-any_of(c("curvature_flow_line", "curvature_total"))) %>%
         cor()
       return(out)
@@ -264,22 +295,85 @@ covcor_mean <- Reduce("+", covcor_list) / length(covcor_list)
 covcor_mean %>%
   corrplot(type = "upper")
 
-covcor_mean %>%
+cor_list2 %>%
+  arrange(-mean_2) %>%
   as.data.frame() %>%
-  arrange(-abs(position_topographic_multi))
+  left_join(covcor_mean %>%
+              as.data.frame() %>%
+              rownames_to_column(), "rowname") %>%
+  select(rowname, mean_2, position_topographic_multi) %>%
+  mutate(index = mean_2*(1 - abs(position_topographic_multi))) %>%
+  arrange(-index)
 
-covcor_mean %>%
-  as.data.frame() %>%
-  mutate(mean = abs(MRVBF) + abs(position_topographic_multi)) %>%
-  arrange(-abs(mean))
+plot(covariates$channel_base_level)
 
-covcor_mean %>%
+# covcor_mean %>%
+#   as.data.frame() %>%
+#   arrange(-abs(position_topographic_multi))
+
+cor_list2 %>%
+  arrange(-mean_2) %>%
   as.data.frame() %>%
-  mutate(mean = abs(MRVBF) + abs(position_topographic_multi) + abs(sinks)) %>%
-  arrange(-abs(mean))
+  left_join(covcor_mean %>%
+              as.data.frame() %>%
+              rownames_to_column(), "rowname") %>%
+  select(rowname,
+         mean_2,
+         position_topographic_multi,
+         channel_base_level
+  ) %>%
+  rowwise() %>%
+  mutate(
+    index = mean_2*(
+      1 - max(
+        abs(position_topographic_multi) , abs(channel_base_level)
+      )
+    )
+  ) %>%
+  arrange(-index) %>%
+  as.data.frame()
+
+plot(covariates$MRVBF)
+
+# covcor_mean %>%
+#   as.data.frame() %>%
+#   mutate(mean = abs(MRVBF) + abs(position_topographic_multi)) %>%
+#   arrange(-abs(mean))
+
+cor_list2 %>%
+  arrange(-mean_2) %>%
+  as.data.frame() %>%
+  left_join(covcor_mean %>%
+              as.data.frame() %>%
+              rownames_to_column(), "rowname") %>%
+  select(rowname,
+         mean_2,
+         position_topographic_multi,
+         channel_base_level,
+         MRVBF
+  ) %>%
+  rowwise() %>%
+  mutate(
+    index = mean_2*(
+      1 - max(
+        abs(position_topographic_multi),
+        abs(channel_base_level),
+        abs(MRVBF)
+      )
+    )
+  ) %>%
+  arrange(-index) %>%
+  as.data.frame()
+
+# covcor_mean %>%
+#   as.data.frame() %>%
+#   mutate(mean = abs(MRVBF) + abs(position_topographic_multi) + abs(sinks)) %>%
+#   arrange(-abs(mean))
+
+plot(covariates$height_slope)
 
 vars_TOPO <- c(
-  "position_topographic_multi", "MRVBF", "sinks", "TWI"
+  "position_topographic_multi", "channel_base_level", "MRVBF", "height_slope"
 )
 
 covariates %>%
@@ -292,24 +386,36 @@ covariates %>%
 
 vars_xy <- c("UTMX", "UTMY")
 
+vars_sensor <- c("DUALEM_PRP1m", "Gamma_Countrate")  # To be added
+
+covariates %>%
+  select(any_of(vars_sensor)) %>%
+  plot()
+
 varlist <- list(
-  vars_xy, vars_DSM10m, vars_TOPO
+  vars_xy, vars_DSM10m, vars_TOPO, vars_sensor
 )
 
-names_cat <- c("XY", "DSM10m", "TOPO")
+names_cat <- c("XY", "DSM10m", "TOPO", "Sensor")
 
 var_indices <- expand.grid(
   c(NA, 1),
-  c(NA, 2),
-  c(NA, 3)
+  c(NA, 2, 3, 4)
+  # c(NA, 2),
+  # c(NA, 3),
+  # c(NA, 4)
 ) %>%
   apply(
     ., 1, 
-        function(x) {
-          out <- unname(x[is.finite(x)])
-          return(out)
-        }
-    )
+    function(x) {
+      out <- unname(x[is.finite(x)])
+      return(out)
+    }
+  ) %>%
+  c(., list(
+    c(2:4), c(1:4)
+  )
+  )
 
 var_indices <- var_indices[lengths(var_indices) != 0]
 
@@ -379,8 +485,6 @@ var_combination_list <- lapply(
 # 3: Regression: thin plate spline
 # Use same points for all targets
 
-time0 <- Sys.time()
-
 n_min <- 5
 sample_dens_max <- 2
 
@@ -391,300 +495,348 @@ set.seed(1)
 seeds <- sample(c(1000:10000), 50)
 n_sample_sizes_rep <- 10
 
-# for (i in 1:length(sitenames)) {
-#   
-#   dir_cov <- paste0(dir_dat, sitenames[i], "/covariates/")
-#   
-#   covariates <- dir_cov %>% list.files(".tif", full.names = TRUE) %>% rast()
-#   
-#   if (sitenames[i] == "Vindum") {
-#     obs <- dir_dat %>%
-#       paste0(., sitenames[i], "/observations.gpkg") %>%
-#       vect() %>%
-#       filter(
-#         Depth == 25,
-#         is.finite(P)
-#       )
-#   } else {
-#     obs <- dir_dat %>%
-#       paste0(., sitenames[i], "/observations.gpkg") %>%
-#       vect() %>%
-#       filter(is.finite(P))
-#   }
-#   
-#   obs %<>% select(-any_of(c("UTMX", "UTMY")))
-#   
-#   cov_files <- dir_cov %>%
-#     list.files(pattern = ".tif", full.names = TRUE)
-#   
-#   cov_names <- cov_files %>%
-#     basename() %>%
-#     file_path_sans_ext() 
-#   
-#   names(covariates) <- cov_names
-#   
-#   obs_cov <- terra::extract(covariates, obs, bind = TRUE) %>%
-#     select(any_of(c("ID", "P", names(covariates)))) %>%
-#     drop_na()
-#   
-#   field_boundary <- dir_dat %>%
-#     paste0(., sitenames[i], "/field_polygon.shp") %>%
-#     vect()
-#   
-#   area_ha <- terra::expanse(field_boundary, unit = "ha")
-#   
-#   val_prop <- max(c(0.25, 10/nrow(obs_cov)))
-#   
-#   n_max <- min(
-#     c(floor(nrow(obs_cov)*(0.5)),
-#       area_ha*sample_dens_max
-#     )
-#   )
-#   
-#   for(j in 1:length(seeds)) {
-#     
-#     set.seed(seeds[j])
-#     
-#     ind_val <- sample(1:nrow(obs_cov), val_prop*nrow(obs_cov))
-#     
-#     obs_cov$ID_new_v2 <- 1:nrow(obs_cov)
-#     
-#     obs_cov_val <- obs_cov[ind_val, ]
-#     obs_cov_train <- obs_cov[-ind_val, ]
-#     
-#     ns_j <- sample(c(n_min:n_max), n_sample_sizes_rep) %>%
-#       sort()
-#     
-#     for (s in 1:length(ns_j)) {
-#       n_j <- ns_j[s]
-#       
-#       for (k in 1:length(names_cat_list)) {
-#         
-#         if (names_cat_list[k] == "XY") {
-#           use_xy_only <- TRUE
-#           use_coordinates <- TRUE
-#         } else {
-#           use_xy_only <- FALSE
-#           use_coordinates <- sum(vars_xy %in% var_combination_list[[k]]) > 0
-#         }
-#         
-#         set.seed(seeds[j])
-#         
-#         myclusters_v <- obs_cov_train %>%
-#           select(any_of(var_combination_list[[k]])) %>%
-#           sample_kmeans(
-#             input = .,
-#             clusters = n_j,
-#             only_xy = use_xy_only,
-#             use_xy = use_coordinates,
-#             pca = !use_xy_only
-#           )
-#         
-#         traindata <- obs_cov_train[myclusters_v$points$Index, ] %>%
-#           values() %>%
-#           select(any_of(c("P", var_combination_list[[k]])))
-#         
-#         upperbound <- mean(traindata$P) + sd(traindata$P)*3
-#         
-#         if (use_xy_only) {
-#           set.seed(seeds[j])
-#           
-#           vars_use <- vars_xy
-#           
-#           ttt <- train(
-#             as.formula(
-#               paste("P ~",
-#                     paste(
-#                       vars_use,
-#                       collapse = "+"
-#                       )
-#                     )
-#               ),
-#             traindata,
-#             method = "gaussprPoly",
-#             trControl = trainControl(
-#               method = "cv",
-#               number = 5,
-#               predictionBounds = c(0, upperbound),
-#             )
-#           )
-#         } else {
-#           set.seed(seeds[j])
-#           
-#           ttt0 <- train(
-#             as.formula(
-#               paste("P ~",
-#                     paste(
-#                       var_combination_list[[k]],
-#                       collapse = "+")
-#                     )
-#               ),
-#             traindata,
-#             method = "gaussprPoly",
-#             preProcess = c(
-#               "nzv"
-#               # ,
-#               # "pca"
-#               ),
-#             trControl = trainControl(
-#               method = "cv",
-#               number = 5,
-#               predictionBounds = c(0, upperbound),
-#               preProcOptions = list(
-#                 freqCut = 80/20,
-#                 uniqueCut = 10
-#               )
-#             )
-#           )
-#           
-#           max_covariates <- min(
-#               nrow(traindata) - 2,
-#               length(var_combination_list[[k]])
-#             )
-#           
-#           if (use_coordinates) {
-#             min_covariates <- 3
-#             
-#             vars_ordered <- varImp(ttt0)$importance %>%
-#               arrange(-Overall) %>%
-#               rownames_to_column() %>%
-#               filter(!(rowname %in% vars_xy)) %>%
-#               select(rowname) %>%
-#               unlist() %>%
-#               unname() %>%
-#               c(vars_xy, .)
-#             
-#           } else {
-#             min_covariates <- 1
-#             
-#             vars_ordered <- varImp(ttt0)$importance %>%
-#               arrange(-Overall) %>%
-#               rownames_to_column() %>%
-#               select(rowname) %>%
-#               unlist() %>%
-#               unname()
-#           }
-#           
-#           
-#           nvars <- c(min_covariates:max_covariates)
-#           
-#           rmses_vars <- sapply(
-#             nvars,
-#             function (x) {
-#               vars_use <- vars_ordered[1:x]
-#               
-#               if (length(vars_use) == 1) {
-#                 preprocess_vars <- NULL
-#               } else {
-#                 preprocess_vars <- c(
-#                   "nzv"
-#                   # ,
-#                   # "pca"
-#                   )
-#               }
-#               
-#               set.seed(seeds[j])
-#               
-#               tttx <- train(
-#                 as.formula(paste("P ~",
-#                                  paste(vars_use, collapse = "+"))),
-#                 traindata,
-#                 method = "gaussprPoly",
-#                 preProcess = preprocess_vars,
-#                 trControl = trainControl(
-#                   method = "cv",
-#                   number = 5,
-#                   predictionBounds = c(0, upperbound),
-#                   preProcOptions = list(
-#                     freqCut = 80/20,
-#                     uniqueCut = 10
-#                   )
-#                 )
-#               )
-#               
-#               out <- tttx$results$RMSE %>%
-#                 min(na.rm = TRUE)
-#               
-#               return(out)
-#             }
-#           )
-#           
-#           vars_use <- vars_ordered[1:nvars[which.min(rmses_vars)]]
-#           
-#           if (length(vars_use) == 1) {
-#             preprocess_vars <- NULL
-#           } else {
-#             preprocess_vars <- c("nzv", "pca")
-#           }
-#           
-#           set.seed(seeds[j])
-#           
-#           ttt <- train(
-#             as.formula(paste("P ~",
-#                              paste(vars_use, collapse = "+"))),
-#             traindata,
-#             method = "gaussprPoly",
-#             preProcess = preprocess_vars,
-#             trControl = trainControl(
-#               method = "cv",
-#               number = 5,
-#               predictionBounds = c(0, upperbound),
-#               preProcOptions = list(
-#                 freqCut = 80/20,
-#                 uniqueCut = 10
-#               )
-#             )
-#           )
-#           
-#         }
-#         
-#         
-#         val_p <- values(obs_cov_val) %>%
-#           predict(ttt, .)
-#         
-#         val_obs_pred <- obs_cov_val %>%
-#           select(P) %>%
-#           values() %>%
-#           mutate(pred = val_p) %>%
-#           na.omit()
-#         
-#         n_per_ha <- nrow(traindata)/area_ha
-#         
-#         results_k <- data.frame(
-#           Site = sitenames[i],
-#           Rep = j,
-#           Seed = seeds[j],
-#           n = nrow(traindata),
-#           n_per_ha = n_per_ha,
-#           R2 = cor(val_obs_pred[, 1], val_obs_pred[, 2])^2,
-#           RMSE = ModelMetrics::rmse(val_obs_pred[, 1], val_obs_pred[, 2]),
-#           Layers = names_cat_list[k],
-#           vars_used = paste0(vars_use, collapse = "+")
-#         )
-#         
-#         list_results[[length(list_results) + 1]] <- results_k
-#         
-#         print(results_k)
-#       }
-#     }
-#   }
-# }
-# 
-# all_results <- bind_rows(list_results)
+time0 <- Sys.time()
 
-# write.table(
-#   all_results,
-#   paste0(dir_results, "/sampletest_fourfields_P.csv") ,
-#   sep = ";",
-#   row.names = FALSE
-# )
+for (i in 1:length(sitenames)) {
+  # for (i in 1) {
 
-# time1 <- Sys.time()
-# 
-# time1 - time0
+  dir_cov <- paste0(dir_dat, sitenames[i], "/covariates/")
+
+  covariates <- dir_cov %>%
+    list.files(".tif", full.names = TRUE) %>%
+    grep(".aux.xml", ., invert=TRUE, value = TRUE) %>%
+    rast()
+
+  if (sitenames[i] == "Vindum") {
+    obs <- dir_dat %>%
+      paste0(., sitenames[i], "/observations.gpkg") %>%
+      vect() %>%
+      filter(
+        Depth == 25,
+        is.finite(P)
+      )
+  } else {
+    obs <- dir_dat %>%
+      paste0(., sitenames[i], "/observations.gpkg") %>%
+      vect() %>%
+      filter(is.finite(P))
+  }
+
+  obs %<>% select(-any_of(c("UTMX", "UTMY")))
+
+  cov_files <- dir_cov %>%
+    list.files(pattern = ".tif", full.names = TRUE) %>%
+    grep(".aux.xml", ., invert=TRUE, value = TRUE)
+
+  cov_names <- cov_files %>%
+    basename() %>%
+    file_path_sans_ext()
+
+  names(covariates) <- cov_names
+
+  obs_cov <- terra::extract(covariates, obs, bind = TRUE) %>%
+    select(any_of(c("ID", vars_target, names(covariates)))) %>%
+    drop_na()
+
+  field_boundary <- dir_dat %>%
+    paste0(., sitenames[i], "/field_polygon.shp") %>%
+    vect()
+
+  area_ha <- terra::expanse(field_boundary, unit = "ha")
+  
+  sigma_pts <- sqrt(area_ha*10^4 / (nrow(obs_cov) * pi))
+  
+  weights_pts <- get_weightsdens(
+    obs_cov,
+    dens_mean = nrow(obs_cov) / (area_ha*10^4),
+    sigma = sigma_pts
+  )
+
+  val_prop <- max(c(0.25, 10/nrow(obs_cov)))
+
+  n_max <- min(
+    c(floor(nrow(obs_cov)*(0.5)),
+      area_ha*sample_dens_max
+    )
+  )
+
+  for(j in 1:length(seeds)) {
+    # for(j in 1) {
+    
+    set.seed(seeds[j])
+
+    ind_val <- sample(
+      1:nrow(obs_cov),
+      val_prop*nrow(obs_cov),
+      prob = weights_pts
+      )
+
+    obs_cov$ID_new_v2 <- 1:nrow(obs_cov)
+
+    obs_cov_val <- obs_cov[ind_val, ]
+    obs_cov_train <- obs_cov[-ind_val, ]
+
+    ns_j <- sample(c(n_min:n_max), n_sample_sizes_rep) %>%
+      sort()
+
+    for (s in 1:length(ns_j)) {
+      n_j <- ns_j[s]
+
+      for (k in 1:length(names_cat_list)) {
+
+        if (names_cat_list[k] == "XY") {
+          use_xy_only <- TRUE
+          use_coordinates <- TRUE
+        } else {
+          use_xy_only <- FALSE
+          use_coordinates <- sum(vars_xy %in% var_combination_list[[k]]) > 0
+        }
+
+        set.seed(seeds[j])
+
+        myclusters_v <- obs_cov_train %>%
+          select(any_of(var_combination_list[[k]])) %>%
+          sample_kmeans(
+            input = .,
+            clusters = n_j,
+            only_xy = use_xy_only,
+            use_xy = use_coordinates,
+            pca = !use_xy_only,
+            weights = weights_pts[-ind_val]
+          )
+
+        traindata <- obs_cov_train[myclusters_v$points$Index, ] %>%
+          values() %>%
+          select(any_of(c(vars_target, var_combination_list[[k]])))
+        
+        for (l in 1:length(vars_target)) {
+          targ <- vars_target[l]
+          
+          upperbound <- traindata %>%
+            summarise(
+              mean = mean(.data[[targ]], na.rm = TRUE),
+              sd = sd(.data[[targ]], na.rm = TRUE)
+            ) %>%
+            mutate(
+              upper = mean + 3*sd
+            ) %>%
+            select("upper") %>%
+            unlist() %>%
+            unname()
+          
+          if (use_xy_only) {
+            set.seed(seeds[j])
+            
+            vars_use <- vars_xy
+            
+            ttt <- train(
+              as.formula(
+                paste(
+                  targ,
+                  "~",
+                  paste(
+                    vars_use,
+                    collapse = "+"
+                  )
+                )
+              ),
+              traindata,
+              method = "gaussprPoly",
+              trControl = trainControl(
+                method = "cv",
+                number = 5,
+                predictionBounds = c(0, upperbound),
+              )
+            )
+          } else {
+            set.seed(seeds[j])
+            
+            ttt0 <- train(
+              as.formula(
+                paste(
+                  targ,
+                  "~",
+                  paste(
+                    var_combination_list[[k]],
+                    collapse = "+")
+                )
+              ),
+              traindata,
+              method = "gaussprPoly",
+              preProcess = c(
+                "nzv"
+                # ,
+                # "pca"
+              ),
+              trControl = trainControl(
+                method = "cv",
+                number = 5,
+                predictionBounds = c(0, upperbound),
+                preProcOptions = list(
+                  freqCut = 80/20,
+                  uniqueCut = 10
+                )
+              )
+            )
+            
+            max_covariates <- min(
+              nrow(traindata) - 2,
+              length(var_combination_list[[k]])
+            )
+            
+            if (use_coordinates) {
+              min_covariates <- 3
+              
+              vars_ordered <- varImp(ttt0)$importance %>%
+                arrange(-Overall) %>%
+                rownames_to_column() %>%
+                filter(!(rowname %in% vars_xy)) %>%
+                select(rowname) %>%
+                unlist() %>%
+                unname() %>%
+                c(vars_xy, .)
+              
+            } else {
+              min_covariates <- 1
+              
+              vars_ordered <- varImp(ttt0)$importance %>%
+                arrange(-Overall) %>%
+                rownames_to_column() %>%
+                select(rowname) %>%
+                unlist() %>%
+                unname()
+            }
+            
+            
+            nvars <- c(min_covariates:max_covariates)
+            
+            rmses_vars <- sapply(
+              nvars,
+              function (x) {
+                vars_use <- vars_ordered[1:x]
+                
+                if (length(vars_use) == 1) {
+                  preprocess_vars <- NULL
+                } else {
+                  preprocess_vars <- c(
+                    "nzv"
+                    # ,
+                    # "pca"
+                  )
+                }
+                
+                set.seed(seeds[j])
+                
+                tttx <- train(
+                  as.formula(paste(
+                    targ,
+                    "~",
+                    paste(vars_use, collapse = "+"))),
+                  traindata,
+                  method = "gaussprPoly",
+                  preProcess = preprocess_vars,
+                  trControl = trainControl(
+                    method = "cv",
+                    number = 5,
+                    predictionBounds = c(0, upperbound),
+                    preProcOptions = list(
+                      freqCut = 80/20,
+                      uniqueCut = 10
+                    )
+                  )
+                )
+                
+                out <- tttx$results$RMSE %>%
+                  min(na.rm = TRUE)
+                
+                return(out)
+              }
+            )
+            
+            vars_use <- vars_ordered[1:nvars[which.min(rmses_vars)]]
+            
+            if (length(vars_use) == 1) {
+              preprocess_vars <- NULL
+            } else {
+              preprocess_vars <- c("nzv", "pca")
+            }
+            
+            set.seed(seeds[j])
+            
+            ttt <- train(
+              as.formula(paste(
+                targ,
+                "~",
+                paste(vars_use, collapse = "+"))),
+              traindata,
+              method = "gaussprPoly",
+              preProcess = preprocess_vars,
+              trControl = trainControl(
+                method = "cv",
+                number = 5,
+                predictionBounds = c(0, upperbound),
+                preProcOptions = list(
+                  freqCut = 80/20,
+                  uniqueCut = 10
+                )
+              )
+            )
+          }
+          
+          val_p <- values(obs_cov_val) %>%
+            predict(ttt, .)
+          
+          val_obs_pred <- obs_cov_val %>%
+            select(any_of(targ)) %>%
+            values() %>%
+            mutate(pred = val_p) %>%
+            na.omit()
+          
+          n_per_ha <- nrow(traindata)/area_ha
+          
+          results_k <- data.frame(
+            Site = sitenames[i],
+            Rep = j,
+            Target = vars_target[l],
+            Seed = seeds[j],
+            n = nrow(traindata),
+            n_per_ha = n_per_ha,
+            R2 = get_R2w(
+              data.frame(obs = val_obs_pred[, 1], pred = val_obs_pred[, 2]),
+              weights_pts[ind_val]
+            ),
+            RMSE = get_RMSEw(
+              data.frame(obs = val_obs_pred[, 1], pred = val_obs_pred[, 2]),
+              weights_pts[ind_val]
+            ),
+            Layers = names_cat_list[k],
+            vars_used = paste0(vars_use, collapse = "+")
+          )
+          
+          list_results[[length(list_results) + 1]] <- results_k
+          
+          print(results_k)
+        }
+      }
+    }
+  }
+}
+
+all_results <- bind_rows(list_results)
+
+write.table(
+  all_results,
+  paste0(dir_results, "/sampletest_fourfields_P_v2.csv") ,
+  sep = ";",
+  row.names = FALSE
+)
+
+time1 <- Sys.time()
+
+time1 - time0
 
 all_results <- read.csv(
-  paste0(dir_results, "/sampletest_fourfields_P.csv"),
+  paste0(dir_results, "/sampletest_fourfields_P_v2.csv"),
     sep = ";"
 )
 
@@ -715,6 +867,7 @@ tiff(
 )
 
 all_results %>%
+  filter(Target == "P") %>%
   mutate(
     R2 = case_when(
       is.na(R2) ~ 0,
@@ -744,8 +897,8 @@ tiff(
   res = 300
 )
 
-
 all_results %>%
+  filter(Target == "P") %>%
   mutate(
     R2 = case_when(
       is.na(R2) ~ 0,
@@ -776,6 +929,7 @@ tiff(
 )
 
 all_results %>%
+  filter(Target == "K") %>%
   mutate(
     R2 = case_when(
       is.na(R2) ~ 0,
@@ -808,6 +962,7 @@ tiff(
 )
 
 all_results %>%
+  filter(Target == "P") %>%
   mutate(
     R2 = case_when(
       is.na(R2) ~ 0,
