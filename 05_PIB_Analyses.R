@@ -170,6 +170,16 @@ for(i in 1:length(sitenames)) {
     grep(".aux.xml", ., invert=TRUE, value = TRUE) %>%
     rast()
   
+  cov_files <- dir_cov %>%
+    list.files(pattern = ".tif", full.names = TRUE) %>%
+    grep(".aux.xml", ., invert=TRUE, value = TRUE)
+  
+  cov_names <- cov_files %>%
+    basename() %>%
+    file_path_sans_ext()
+  
+  names(covariates) <- cov_names
+  
   if (sitenames[i] == "Vindum") {
     obs <- dir_dat %>%
       paste0(., sitenames[i], "/observations.gpkg") %>%
@@ -494,346 +504,346 @@ set.seed(1)
 
 seeds <- sample(c(1000:10000), 50)
 n_sample_sizes_rep <- 10
-
-time0 <- Sys.time()
-
-for (i in 1:length(sitenames)) {
-  # for (i in 1) {
-
-  dir_cov <- paste0(dir_dat, sitenames[i], "/covariates/")
-
-  covariates <- dir_cov %>%
-    list.files(".tif", full.names = TRUE) %>%
-    grep(".aux.xml", ., invert=TRUE, value = TRUE) %>%
-    rast()
-
-  if (sitenames[i] == "Vindum") {
-    obs <- dir_dat %>%
-      paste0(., sitenames[i], "/observations.gpkg") %>%
-      vect() %>%
-      filter(
-        Depth == 25,
-        is.finite(P)
-      )
-  } else {
-    obs <- dir_dat %>%
-      paste0(., sitenames[i], "/observations.gpkg") %>%
-      vect() %>%
-      filter(is.finite(P))
-  }
-
-  obs %<>% select(-any_of(c("UTMX", "UTMY")))
-
-  cov_files <- dir_cov %>%
-    list.files(pattern = ".tif", full.names = TRUE) %>%
-    grep(".aux.xml", ., invert=TRUE, value = TRUE)
-
-  cov_names <- cov_files %>%
-    basename() %>%
-    file_path_sans_ext()
-
-  names(covariates) <- cov_names
-
-  obs_cov <- terra::extract(covariates, obs, bind = TRUE) %>%
-    select(any_of(c("ID", vars_target, names(covariates)))) %>%
-    drop_na()
-
-  field_boundary <- dir_dat %>%
-    paste0(., sitenames[i], "/field_polygon.shp") %>%
-    vect()
-
-  area_ha <- terra::expanse(field_boundary, unit = "ha")
-  
-  sigma_pts <- sqrt(area_ha*10^4 / (nrow(obs_cov) * pi))
-  
-  weights_pts <- get_weightsdens(
-    obs_cov,
-    dens_mean = nrow(obs_cov) / (area_ha*10^4),
-    sigma = sigma_pts
-  )
-
-  val_prop <- max(c(0.25, 10/nrow(obs_cov)))
-
-  n_max <- min(
-    c(floor(nrow(obs_cov)*(0.5)),
-      area_ha*sample_dens_max
-    )
-  )
-
-  for(j in 1:length(seeds)) {
-    # for(j in 1) {
-    
-    set.seed(seeds[j])
-
-    ind_val <- sample(
-      1:nrow(obs_cov),
-      val_prop*nrow(obs_cov),
-      prob = weights_pts
-      )
-
-    obs_cov$ID_new_v2 <- 1:nrow(obs_cov)
-
-    obs_cov_val <- obs_cov[ind_val, ]
-    obs_cov_train <- obs_cov[-ind_val, ]
-
-    ns_j <- sample(c(n_min:n_max), n_sample_sizes_rep) %>%
-      sort()
-
-    for (s in 1:length(ns_j)) {
-      n_j <- ns_j[s]
-
-      for (k in 1:length(names_cat_list)) {
-
-        if (names_cat_list[k] == "XY") {
-          use_xy_only <- TRUE
-          use_coordinates <- TRUE
-        } else {
-          use_xy_only <- FALSE
-          use_coordinates <- sum(vars_xy %in% var_combination_list[[k]]) > 0
-        }
-
-        set.seed(seeds[j])
-
-        myclusters_v <- obs_cov_train %>%
-          select(any_of(var_combination_list[[k]])) %>%
-          sample_kmeans(
-            input = .,
-            clusters = n_j,
-            only_xy = use_xy_only,
-            use_xy = use_coordinates,
-            pca = !use_xy_only,
-            weights = weights_pts[-ind_val]
-          )
-
-        traindata <- obs_cov_train[myclusters_v$points$Index, ] %>%
-          values() %>%
-          select(any_of(c(vars_target, var_combination_list[[k]])))
-        
-        for (l in 1:length(vars_target)) {
-          targ <- vars_target[l]
-          
-          upperbound <- traindata %>%
-            summarise(
-              mean = mean(.data[[targ]], na.rm = TRUE),
-              sd = sd(.data[[targ]], na.rm = TRUE)
-            ) %>%
-            mutate(
-              upper = mean + 3*sd
-            ) %>%
-            select("upper") %>%
-            unlist() %>%
-            unname()
-          
-          if (use_xy_only) {
-            set.seed(seeds[j])
-            
-            vars_use <- vars_xy
-            
-            ttt <- train(
-              as.formula(
-                paste(
-                  targ,
-                  "~",
-                  paste(
-                    vars_use,
-                    collapse = "+"
-                  )
-                )
-              ),
-              traindata,
-              method = "gaussprPoly",
-              trControl = trainControl(
-                method = "cv",
-                number = 5,
-                predictionBounds = c(0, upperbound),
-              )
-            )
-          } else {
-            set.seed(seeds[j])
-            
-            ttt0 <- train(
-              as.formula(
-                paste(
-                  targ,
-                  "~",
-                  paste(
-                    var_combination_list[[k]],
-                    collapse = "+")
-                )
-              ),
-              traindata,
-              method = "gaussprPoly",
-              preProcess = c(
-                "nzv"
-                # ,
-                # "pca"
-              ),
-              trControl = trainControl(
-                method = "cv",
-                number = 5,
-                predictionBounds = c(0, upperbound),
-                preProcOptions = list(
-                  freqCut = 80/20,
-                  uniqueCut = 10
-                )
-              )
-            )
-            
-            max_covariates <- min(
-              nrow(traindata) - 2,
-              length(var_combination_list[[k]])
-            )
-            
-            if (use_coordinates) {
-              min_covariates <- 3
-              
-              vars_ordered <- varImp(ttt0)$importance %>%
-                arrange(-Overall) %>%
-                rownames_to_column() %>%
-                filter(!(rowname %in% vars_xy)) %>%
-                select(rowname) %>%
-                unlist() %>%
-                unname() %>%
-                c(vars_xy, .)
-              
-            } else {
-              min_covariates <- 1
-              
-              vars_ordered <- varImp(ttt0)$importance %>%
-                arrange(-Overall) %>%
-                rownames_to_column() %>%
-                select(rowname) %>%
-                unlist() %>%
-                unname()
-            }
-            
-            
-            nvars <- c(min_covariates:max_covariates)
-            
-            rmses_vars <- sapply(
-              nvars,
-              function (x) {
-                vars_use <- vars_ordered[1:x]
-                
-                if (length(vars_use) == 1) {
-                  preprocess_vars <- NULL
-                } else {
-                  preprocess_vars <- c(
-                    "nzv"
-                    # ,
-                    # "pca"
-                  )
-                }
-                
-                set.seed(seeds[j])
-                
-                tttx <- train(
-                  as.formula(paste(
-                    targ,
-                    "~",
-                    paste(vars_use, collapse = "+"))),
-                  traindata,
-                  method = "gaussprPoly",
-                  preProcess = preprocess_vars,
-                  trControl = trainControl(
-                    method = "cv",
-                    number = 5,
-                    predictionBounds = c(0, upperbound),
-                    preProcOptions = list(
-                      freqCut = 80/20,
-                      uniqueCut = 10
-                    )
-                  )
-                )
-                
-                out <- tttx$results$RMSE %>%
-                  min(na.rm = TRUE)
-                
-                return(out)
-              }
-            )
-            
-            vars_use <- vars_ordered[1:nvars[which.min(rmses_vars)]]
-            
-            if (length(vars_use) == 1) {
-              preprocess_vars <- NULL
-            } else {
-              preprocess_vars <- c("nzv", "pca")
-            }
-            
-            set.seed(seeds[j])
-            
-            ttt <- train(
-              as.formula(paste(
-                targ,
-                "~",
-                paste(vars_use, collapse = "+"))),
-              traindata,
-              method = "gaussprPoly",
-              preProcess = preprocess_vars,
-              trControl = trainControl(
-                method = "cv",
-                number = 5,
-                predictionBounds = c(0, upperbound),
-                preProcOptions = list(
-                  freqCut = 80/20,
-                  uniqueCut = 10
-                )
-              )
-            )
-          }
-          
-          val_p <- values(obs_cov_val) %>%
-            predict(ttt, .)
-          
-          val_obs_pred <- obs_cov_val %>%
-            select(any_of(targ)) %>%
-            values() %>%
-            mutate(pred = val_p) %>%
-            na.omit()
-          
-          n_per_ha <- nrow(traindata)/area_ha
-          
-          results_k <- data.frame(
-            Site = sitenames[i],
-            Rep = j,
-            Target = vars_target[l],
-            Seed = seeds[j],
-            n = nrow(traindata),
-            n_per_ha = n_per_ha,
-            R2 = get_R2w(
-              data.frame(obs = val_obs_pred[, 1], pred = val_obs_pred[, 2]),
-              weights_pts[ind_val]
-            ),
-            RMSE = get_RMSEw(
-              data.frame(obs = val_obs_pred[, 1], pred = val_obs_pred[, 2]),
-              weights_pts[ind_val]
-            ),
-            Layers = names_cat_list[k],
-            vars_used = paste0(vars_use, collapse = "+")
-          )
-          
-          list_results[[length(list_results) + 1]] <- results_k
-          
-          print(results_k)
-        }
-      }
-    }
-  }
-}
-
-all_results <- bind_rows(list_results)
-
-write.table(
-  all_results,
-  paste0(dir_results, "/sampletest_fourfields_P_v2.csv") ,
-  sep = ";",
-  row.names = FALSE
-)
-
-time1 <- Sys.time()
-
-time1 - time0
+# 
+# time0 <- Sys.time()
+# 
+# for (i in 1:length(sitenames)) {
+#   # for (i in 1) {
+# 
+#   dir_cov <- paste0(dir_dat, sitenames[i], "/covariates/")
+# 
+#   covariates <- dir_cov %>%
+#     list.files(".tif", full.names = TRUE) %>%
+#     grep(".aux.xml", ., invert=TRUE, value = TRUE) %>%
+#     rast()
+# 
+#   if (sitenames[i] == "Vindum") {
+#     obs <- dir_dat %>%
+#       paste0(., sitenames[i], "/observations.gpkg") %>%
+#       vect() %>%
+#       filter(
+#         Depth == 25,
+#         is.finite(P)
+#       )
+#   } else {
+#     obs <- dir_dat %>%
+#       paste0(., sitenames[i], "/observations.gpkg") %>%
+#       vect() %>%
+#       filter(is.finite(P))
+#   }
+# 
+#   obs %<>% select(-any_of(c("UTMX", "UTMY")))
+# 
+#   cov_files <- dir_cov %>%
+#     list.files(pattern = ".tif", full.names = TRUE) %>%
+#     grep(".aux.xml", ., invert=TRUE, value = TRUE)
+# 
+#   cov_names <- cov_files %>%
+#     basename() %>%
+#     file_path_sans_ext()
+# 
+#   names(covariates) <- cov_names
+# 
+#   obs_cov <- terra::extract(covariates, obs, bind = TRUE) %>%
+#     select(any_of(c("ID", vars_target, names(covariates)))) %>%
+#     drop_na()
+# 
+#   field_boundary <- dir_dat %>%
+#     paste0(., sitenames[i], "/field_polygon.shp") %>%
+#     vect()
+# 
+#   area_ha <- terra::expanse(field_boundary, unit = "ha")
+#   
+#   sigma_pts <- sqrt(area_ha*10^4 / (nrow(obs_cov) * pi))
+#   
+#   weights_pts <- get_weightsdens(
+#     obs_cov,
+#     dens_mean = nrow(obs_cov) / (area_ha*10^4),
+#     sigma = sigma_pts
+#   )
+# 
+#   val_prop <- max(c(0.25, 10/nrow(obs_cov)))
+# 
+#   n_max <- min(
+#     c(floor(nrow(obs_cov)*(0.5)),
+#       area_ha*sample_dens_max
+#     )
+#   )
+# 
+#   for(j in 1:length(seeds)) {
+#     # for(j in 1) {
+#     
+#     set.seed(seeds[j])
+# 
+#     ind_val <- sample(
+#       1:nrow(obs_cov),
+#       val_prop*nrow(obs_cov),
+#       prob = weights_pts
+#       )
+# 
+#     obs_cov$ID_new_v2 <- 1:nrow(obs_cov)
+# 
+#     obs_cov_val <- obs_cov[ind_val, ]
+#     obs_cov_train <- obs_cov[-ind_val, ]
+# 
+#     ns_j <- sample(c(n_min:n_max), n_sample_sizes_rep) %>%
+#       sort()
+# 
+#     for (s in 1:length(ns_j)) {
+#       n_j <- ns_j[s]
+# 
+#       for (k in 1:length(names_cat_list)) {
+# 
+#         if (names_cat_list[k] == "XY") {
+#           use_xy_only <- TRUE
+#           use_coordinates <- TRUE
+#         } else {
+#           use_xy_only <- FALSE
+#           use_coordinates <- sum(vars_xy %in% var_combination_list[[k]]) > 0
+#         }
+# 
+#         set.seed(seeds[j])
+# 
+#         myclusters_v <- obs_cov_train %>%
+#           select(any_of(var_combination_list[[k]])) %>%
+#           sample_kmeans(
+#             input = .,
+#             clusters = n_j,
+#             only_xy = use_xy_only,
+#             use_xy = use_coordinates,
+#             pca = !use_xy_only,
+#             weights = weights_pts[-ind_val]
+#           )
+# 
+#         traindata <- obs_cov_train[myclusters_v$points$Index, ] %>%
+#           values() %>%
+#           select(any_of(c(vars_target, var_combination_list[[k]])))
+#         
+#         for (l in 1:length(vars_target)) {
+#           targ <- vars_target[l]
+#           
+#           upperbound <- traindata %>%
+#             summarise(
+#               mean = mean(.data[[targ]], na.rm = TRUE),
+#               sd = sd(.data[[targ]], na.rm = TRUE)
+#             ) %>%
+#             mutate(
+#               upper = mean + 3*sd
+#             ) %>%
+#             select("upper") %>%
+#             unlist() %>%
+#             unname()
+#           
+#           if (use_xy_only) {
+#             set.seed(seeds[j])
+#             
+#             vars_use <- vars_xy
+#             
+#             ttt <- train(
+#               as.formula(
+#                 paste(
+#                   targ,
+#                   "~",
+#                   paste(
+#                     vars_use,
+#                     collapse = "+"
+#                   )
+#                 )
+#               ),
+#               traindata,
+#               method = "gaussprPoly",
+#               trControl = trainControl(
+#                 method = "cv",
+#                 number = 5,
+#                 predictionBounds = c(0, upperbound),
+#               )
+#             )
+#           } else {
+#             set.seed(seeds[j])
+#             
+#             ttt0 <- train(
+#               as.formula(
+#                 paste(
+#                   targ,
+#                   "~",
+#                   paste(
+#                     var_combination_list[[k]],
+#                     collapse = "+")
+#                 )
+#               ),
+#               traindata,
+#               method = "gaussprPoly",
+#               preProcess = c(
+#                 "nzv"
+#                 # ,
+#                 # "pca"
+#               ),
+#               trControl = trainControl(
+#                 method = "cv",
+#                 number = 5,
+#                 predictionBounds = c(0, upperbound),
+#                 preProcOptions = list(
+#                   freqCut = 80/20,
+#                   uniqueCut = 10
+#                 )
+#               )
+#             )
+#             
+#             max_covariates <- min(
+#               nrow(traindata) - 2,
+#               length(var_combination_list[[k]])
+#             )
+#             
+#             if (use_coordinates) {
+#               min_covariates <- 3
+#               
+#               vars_ordered <- varImp(ttt0)$importance %>%
+#                 arrange(-Overall) %>%
+#                 rownames_to_column() %>%
+#                 filter(!(rowname %in% vars_xy)) %>%
+#                 select(rowname) %>%
+#                 unlist() %>%
+#                 unname() %>%
+#                 c(vars_xy, .)
+#               
+#             } else {
+#               min_covariates <- 1
+#               
+#               vars_ordered <- varImp(ttt0)$importance %>%
+#                 arrange(-Overall) %>%
+#                 rownames_to_column() %>%
+#                 select(rowname) %>%
+#                 unlist() %>%
+#                 unname()
+#             }
+#             
+#             
+#             nvars <- c(min_covariates:max_covariates)
+#             
+#             rmses_vars <- sapply(
+#               nvars,
+#               function (x) {
+#                 vars_use <- vars_ordered[1:x]
+#                 
+#                 if (length(vars_use) == 1) {
+#                   preprocess_vars <- NULL
+#                 } else {
+#                   preprocess_vars <- c(
+#                     "nzv"
+#                     # ,
+#                     # "pca"
+#                   )
+#                 }
+#                 
+#                 set.seed(seeds[j])
+#                 
+#                 tttx <- train(
+#                   as.formula(paste(
+#                     targ,
+#                     "~",
+#                     paste(vars_use, collapse = "+"))),
+#                   traindata,
+#                   method = "gaussprPoly",
+#                   preProcess = preprocess_vars,
+#                   trControl = trainControl(
+#                     method = "cv",
+#                     number = 5,
+#                     predictionBounds = c(0, upperbound),
+#                     preProcOptions = list(
+#                       freqCut = 80/20,
+#                       uniqueCut = 10
+#                     )
+#                   )
+#                 )
+#                 
+#                 out <- tttx$results$RMSE %>%
+#                   min(na.rm = TRUE)
+#                 
+#                 return(out)
+#               }
+#             )
+#             
+#             vars_use <- vars_ordered[1:nvars[which.min(rmses_vars)]]
+#             
+#             if (length(vars_use) == 1) {
+#               preprocess_vars <- NULL
+#             } else {
+#               preprocess_vars <- c("nzv", "pca")
+#             }
+#             
+#             set.seed(seeds[j])
+#             
+#             ttt <- train(
+#               as.formula(paste(
+#                 targ,
+#                 "~",
+#                 paste(vars_use, collapse = "+"))),
+#               traindata,
+#               method = "gaussprPoly",
+#               preProcess = preprocess_vars,
+#               trControl = trainControl(
+#                 method = "cv",
+#                 number = 5,
+#                 predictionBounds = c(0, upperbound),
+#                 preProcOptions = list(
+#                   freqCut = 80/20,
+#                   uniqueCut = 10
+#                 )
+#               )
+#             )
+#           }
+#           
+#           val_p <- values(obs_cov_val) %>%
+#             predict(ttt, .)
+#           
+#           val_obs_pred <- obs_cov_val %>%
+#             select(any_of(targ)) %>%
+#             values() %>%
+#             mutate(pred = val_p) %>%
+#             na.omit()
+#           
+#           n_per_ha <- nrow(traindata)/area_ha
+#           
+#           results_k <- data.frame(
+#             Site = sitenames[i],
+#             Rep = j,
+#             Target = vars_target[l],
+#             Seed = seeds[j],
+#             n = nrow(traindata),
+#             n_per_ha = n_per_ha,
+#             R2 = get_R2w(
+#               data.frame(obs = val_obs_pred[, 1], pred = val_obs_pred[, 2]),
+#               weights_pts[ind_val]
+#             ),
+#             RMSE = get_RMSEw(
+#               data.frame(obs = val_obs_pred[, 1], pred = val_obs_pred[, 2]),
+#               weights_pts[ind_val]
+#             ),
+#             Layers = names_cat_list[k],
+#             vars_used = paste0(vars_use, collapse = "+")
+#           )
+#           
+#           list_results[[length(list_results) + 1]] <- results_k
+#           
+#           print(results_k)
+#         }
+#       }
+#     }
+#   }
+# }
+# 
+# all_results <- bind_rows(list_results)
+# 
+# write.table(
+#   all_results,
+#   paste0(dir_results, "/sampletest_fourfields_P_v2.csv") ,
+#   sep = ";",
+#   row.names = FALSE
+# )
+# 
+# time1 <- Sys.time()
+# 
+# time1 - time0
 
 all_results <- read.csv(
   paste0(dir_results, "/sampletest_fourfields_P_v2.csv"),
@@ -855,8 +865,8 @@ all_results %>%
     maxdens = max(n_per_ha)
   )
 
-mindens_t <- 0.43
-maxdens_t <- 0.72
+mindens_t <- 0.5
+maxdens_t <- 0.7
 
 # RMSE per method, plot for each site, line only (effect of n samples is small)
 
@@ -865,7 +875,7 @@ tiff(
   width = 16, height = 10, units = "cm",
   res = 300
 )
-
+ 
 all_results %>%
   filter(Target == "P") %>%
   mutate(
@@ -920,14 +930,6 @@ all_results %>%
 try(dev.off())
 try(dev.off())
 
-# Violin plot for RMSE, 0.43 - 0.72 samples per ha
-
-tiff(
-  paste0(dir_results, "/Violin_RMSE.tiff"),
-  width = 16, height = 10, units = "cm",
-  res = 300
-)
-
 all_results %>%
   filter(Target == "K") %>%
   mutate(
@@ -936,60 +938,98 @@ all_results %>%
       .default = R2
     )
   ) %>%
-  # filter(RMSE < 2) %>%
-  filter(
-    n_per_ha < maxdens_t,
-    n_per_ha > mindens_t
-    ) %>%
-  ggplot(aes(x = Layers, y = RMSE, fill = Layers)) +
-  geom_violin() +
-  facet_wrap(~ Site, nrow = 2, scales = "free_x") +
-  stat_summary(fun.y = mean, geom="point", size = 2) +
-  coord_flip() +
-  xlab(NULL)
-# +
-#   ylim(0, NA)
-
-try(dev.off())
-try(dev.off())
-
-# Violin plot for R2, 0.43 - 0.72 samples per ha
-
-tiff(
-  paste0(dir_results, "/Violin_R2.tiff"),
-  width = 16, height = 10, units = "cm",
-  res = 300
-)
-
-all_results %>%
-  filter(Target == "P") %>%
-  mutate(
-    R2 = case_when(
-      is.na(R2) ~ 0,
-      .default = R2
-    )
-  ) %>%
-  filter(RMSE < 2) %>%
-  filter(
-    n_per_ha < maxdens_t,
-    n_per_ha > mindens_t
-  ) %>%
-  ggplot(aes(x = Layers, y = R2, fill = Layers)) +
-  geom_violin(, scale = "width", bounds = c(0, Inf)) +
-  facet_wrap(~ Site, nrow = 2, scales = "free_x") +
-  stat_summary(fun.y = mean, geom="point", size = 2) +
-  coord_flip() +
+  ggplot(aes(x = n_per_ha, y = R2, col = Layers)) +
+  facet_wrap(~ Site, scales = "free", nrow = 2) +
+  geom_smooth(
+    # method = "lm",
+    # span = 1,
+    se = FALSE
+  ) +
+  ylim(0, NA) +
   ylab(bquote(R^2)) +
-  xlab(NULL)
+  xlab("n/ha")
 
-try(dev.off())
-try(dev.off())
+# Violin plot for RMSE, 0.5 - 0.7 samples per ha
+
+for (i in 1:4) {
+  
+  myplot <- all_results %>%
+    filter(Target == vars_target[i]) %>%
+    mutate(
+      R2 = case_when(
+        is.na(R2) ~ 0,
+        .default = R2
+      )
+    ) %>%
+    # filter(RMSE < 2) %>%
+    filter(
+      n_per_ha < maxdens_t,
+      n_per_ha > mindens_t
+    ) %>%
+    ggplot(aes(x = Layers, y = RMSE, fill = Layers)) +
+    geom_violin() +
+    facet_wrap(~ Site, nrow = 2, scales = "free_x") +
+    stat_summary(fun.y = mean, geom="point", size = 2) +
+    coord_flip() +
+    xlab(NULL)
+  
+  tiff(
+    paste0(dir_results, "/Violin_RMSE_", vars_target[i], ".tiff"),
+    width = 16, height = 10, units = "cm",
+    res = 300
+  )
+  
+  print(myplot)
+  
+  try(dev.off())
+  try(dev.off())
+}
+
+
+# Violin plot for R2, 0.5 - 0.7 samples per ha
+
+for (i in 1:4) {
+  
+  myplot <- all_results %>%
+    filter(Target == vars_target[i]) %>%
+    mutate(
+      R2 = case_when(
+        is.na(R2) ~ 0,
+        .default = R2
+      )
+    ) %>%
+    # filter(RMSE < 2) %>%
+    filter(
+      n_per_ha < maxdens_t,
+      n_per_ha > mindens_t
+    ) %>%
+    ggplot(aes(x = Layers, y = R2, fill = Layers)) +
+    geom_violin(, scale = "width", bounds = c(0, Inf)) +
+    facet_wrap(~ Site, nrow = 2, scales = "free_x") +
+    stat_summary(fun.y = mean, geom="point", size = 2) +
+    coord_flip() +
+    ylab(bquote(R^2)) +
+    xlab(NULL)
+    
+  tiff(
+    paste0(dir_results, "/Violin_R2_", vars_target[i], ".tiff"),
+    width = 16, height = 10, units = "cm",
+    res = 300
+  )
+  
+  print(myplot)
+  
+  try(dev.off())
+  try(dev.off())
+  
+}
+
 
 
 # +
 #   ylim(0, NA)
 
-# Calculate standardized accuracies, by field
+# Calculate standardized accuracies, by field and target
 
 acc_means_Sites <- all_results %>%
   mutate(
@@ -1002,7 +1042,7 @@ acc_means_Sites <- all_results %>%
     n_per_ha < maxdens_t,
     n_per_ha > mindens_t
   ) %>%
-  group_by(Site) %>%
+  group_by(Site, Target) %>%
   reframe(
     R2_Site = mean(R2),
     RMSE_Site = mean(RMSE)
@@ -1011,11 +1051,11 @@ acc_means_Sites <- all_results %>%
 acc_means_Sites
 
 acc_means_all <- acc_means_Sites %>%
+  group_by(Target) %>%
   reframe(
     R2_all = mean(R2_Site),
     RMSE_all = mean(RMSE_Site)
-  ) %>%
-  unlist()
+  )
 
 acc_means_all
 
@@ -1032,12 +1072,12 @@ acc_means_Layers <- all_results %>%
     n_per_ha < maxdens_t,
     n_per_ha > mindens_t
   ) %>%
-  group_by(Site, Layers) %>%
+  group_by(Site, Layers, Target) %>%
   reframe(
     R2_mean = mean(R2),
     RMSE_mean = mean(RMSE)
   ) %>%
-  group_by(Layers) %>%
+  group_by(Layers, Target) %>%
   reframe(
     R2_lyr = mean(R2_mean),
     RMSE_lyr = mean(RMSE_mean)
@@ -1056,7 +1096,7 @@ acc_means_Layers_Sites <- all_results %>%
     n_per_ha < maxdens_t,
     n_per_ha > mindens_t
   ) %>%
-  group_by(Site, Layers) %>%
+  group_by(Site, Layers, Target) %>%
   reframe(
     R2_lyrSite = mean(R2),
     RMSE_lyrSite = mean(RMSE)
@@ -1065,8 +1105,8 @@ acc_means_Layers_Sites <- all_results %>%
 acc_means_Layers_Sites
 
 acc_summary_scalers <- acc_means_Layers_Sites %>%
-  left_join(., acc_means_Sites, by = "Site") %>%
-  left_join(., acc_means_Layers, by = "Layers") %>%
+  left_join(., acc_means_Sites, by = join_by(Site, Target)) %>%
+  left_join(., acc_means_Layers, by = join_by(Layers, Target)) %>%
   mutate(
     # R2_Site_mult = R2_Site / acc_means_all[1],
     # RMSE_Site_mult = RMSE_Site / acc_means_all[2],
@@ -1084,102 +1124,102 @@ acc_summary_scalers %>% as.data.frame()
 
 # Standardized R2, one plot
 
-all_results %>%
-  mutate(
-    R2 = case_when(
-      is.na(R2) ~ 0,
-      .default = R2
-      )
-  ) %>%
-  right_join(., acc_means, by = "Site") %>%
-  mutate(
-    R2_scaled = R2 / R2_mean,
-    RMSE_scaled = RMSE / RMSE_mean
-  ) %>%
-  ggplot(aes(x = n_per_ha, y = R2_scaled, col = Layers)) +
-  # geom_point() +
-  geom_smooth(
-    # method = "lm"
-    # se = FALSE
-  ) +
-  ylim(0, NA) +
-  geom_vline(xintercept = mindens_t, linetype = "dashed") +
-  geom_vline(xintercept = maxdens_t, linetype = "dashed")
-
-# Standardized RMSE, one plot (kind of flat)
-
-all_results %>%
-  mutate(
-    R2 = case_when(
-      is.na(R2) ~ 0,
-      .default = R2
-    )
-  ) %>%
-  right_join(., acc_means, by = "Site") %>%
-  mutate(
-    R2_scaled = R2 / R2_mean,
-    RMSE_scaled = RMSE / RMSE_mean
-  ) %>%
-  ggplot(aes(x = n_per_ha, y = RMSE_scaled, col = Layers)) +
-  # geom_point() +
-  geom_smooth(
-    # method = "lm"
-    # se = FALSE
-  ) +
-  # ylim(0, NA) +
-  geom_vline(xintercept = mindens_t, linetype = "dashed") +
-  geom_vline(xintercept = maxdens_t, linetype = "dashed")
-
-# Standardized RMSE, by method, with points
-
-all_results %>%
-  mutate(
-    R2 = case_when(
-      is.na(R2) ~ 0,
-      .default = R2
-    )
-  ) %>%
-  right_join(., acc_means, by = "Site") %>%
-  mutate(
-    R2_scaled = R2 / R2_mean,
-    RMSE_scaled = RMSE / RMSE_mean
-  ) %>%
-  ggplot(aes(x = n_per_ha, y = RMSE_scaled, col = Layers)) +
-  facet_wrap(~ Layers, nrow = 2) +
-  geom_point() +
-  geom_smooth(
-    col = "black"
-    # method = "lm"
-    # se = FALSE
-  ) +
-  # ylim(0, NA) +
-  geom_vline(xintercept = mindens_t, linetype = "dashed") +
-  geom_vline(xintercept = maxdens_t, linetype = "dashed")
-
-# Standardized R2, by method, with points
-
-all_results %>%
-  mutate(
-    R2 = case_when(
-      is.na(R2) ~ 0,
-      .default = R2
-    )
-  ) %>%
-  right_join(., acc_means, by = "Site") %>%
-  mutate(
-    R2_scaled = R2 / R2_mean,
-    RMSE_scaled = RMSE / RMSE_mean
-  ) %>%
-  ggplot(aes(x = n_per_ha, y = R2_scaled, col = Layers)) +
-  facet_wrap(~ Layers, nrow = 2) +
-  geom_point() +
-  geom_smooth(
-    col = "black"
-    # method = "lm"
-    # se = FALSE
-  ) +
-  geom_vline(xintercept = mindens_t, linetype = "dashed") +
-  geom_vline(xintercept = maxdens_t, linetype = "dashed")
+# all_results %>%
+#   mutate(
+#     R2 = case_when(
+#       is.na(R2) ~ 0,
+#       .default = R2
+#       )
+#   ) %>%
+#   right_join(., acc_means, by = "Site") %>%
+#   mutate(
+#     R2_scaled = R2 / R2_mean,
+#     RMSE_scaled = RMSE / RMSE_mean
+#   ) %>%
+#   ggplot(aes(x = n_per_ha, y = R2_scaled, col = Layers)) +
+#   # geom_point() +
+#   geom_smooth(
+#     # method = "lm"
+#     # se = FALSE
+#   ) +
+#   ylim(0, NA) +
+#   geom_vline(xintercept = mindens_t, linetype = "dashed") +
+#   geom_vline(xintercept = maxdens_t, linetype = "dashed")
+# 
+# # Standardized RMSE, one plot (kind of flat)
+# 
+# all_results %>%
+#   mutate(
+#     R2 = case_when(
+#       is.na(R2) ~ 0,
+#       .default = R2
+#     )
+#   ) %>%
+#   right_join(., acc_means, by = "Site") %>%
+#   mutate(
+#     R2_scaled = R2 / R2_mean,
+#     RMSE_scaled = RMSE / RMSE_mean
+#   ) %>%
+#   ggplot(aes(x = n_per_ha, y = RMSE_scaled, col = Layers)) +
+#   # geom_point() +
+#   geom_smooth(
+#     # method = "lm"
+#     # se = FALSE
+#   ) +
+#   # ylim(0, NA) +
+#   geom_vline(xintercept = mindens_t, linetype = "dashed") +
+#   geom_vline(xintercept = maxdens_t, linetype = "dashed")
+# 
+# # Standardized RMSE, by method, with points
+# 
+# all_results %>%
+#   mutate(
+#     R2 = case_when(
+#       is.na(R2) ~ 0,
+#       .default = R2
+#     )
+#   ) %>%
+#   right_join(., acc_means, by = "Site") %>%
+#   mutate(
+#     R2_scaled = R2 / R2_mean,
+#     RMSE_scaled = RMSE / RMSE_mean
+#   ) %>%
+#   ggplot(aes(x = n_per_ha, y = RMSE_scaled, col = Layers)) +
+#   facet_wrap(~ Layers, nrow = 2) +
+#   geom_point() +
+#   geom_smooth(
+#     col = "black"
+#     # method = "lm"
+#     # se = FALSE
+#   ) +
+#   # ylim(0, NA) +
+#   geom_vline(xintercept = mindens_t, linetype = "dashed") +
+#   geom_vline(xintercept = maxdens_t, linetype = "dashed")
+# 
+# # Standardized R2, by method, with points
+# 
+# all_results %>%
+#   mutate(
+#     R2 = case_when(
+#       is.na(R2) ~ 0,
+#       .default = R2
+#     )
+#   ) %>%
+#   right_join(., acc_means, by = "Site") %>%
+#   mutate(
+#     R2_scaled = R2 / R2_mean,
+#     RMSE_scaled = RMSE / RMSE_mean
+#   ) %>%
+#   ggplot(aes(x = n_per_ha, y = R2_scaled, col = Layers)) +
+#   facet_wrap(~ Layers, nrow = 2) +
+#   geom_point() +
+#   geom_smooth(
+#     col = "black"
+#     # method = "lm"
+#     # se = FALSE
+#   ) +
+#   geom_vline(xintercept = mindens_t, linetype = "dashed") +
+#   geom_vline(xintercept = maxdens_t, linetype = "dashed")
 
 # Using summary scalers
 
@@ -1191,6 +1231,8 @@ tiff(
   res = 300
 )
 
+i <- 1
+
 all_results %>%
   mutate(
     R2 = case_when(
@@ -1198,7 +1240,7 @@ all_results %>%
       .default = R2
     )
   ) %>%
-  right_join(., acc_summary_scalers, by = c("Site", "Layers")) %>%
+  right_join(., acc_summary_scalers, by = c("Site", "Layers", "Target")) %>%
   mutate(
     R2_scaled = R2*R2_mult,
     RMSE_scaled = RMSE*RMSE_mult
@@ -1215,7 +1257,8 @@ all_results %>%
   geom_vline(xintercept = maxdens_t, linetype = "dashed") +
   geom_vline(xintercept = 1) +
   xlab("n/ha") +
-  ylab("Scaled RMSE")
+  ylab("Scaled RMSE") +
+  facet_wrap(vars(Target))
 
 try(dev.off())
 try(dev.off())
