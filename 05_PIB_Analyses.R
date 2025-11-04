@@ -2,7 +2,7 @@
 
 # TO DO:
 # Weighted sampling for k-means.
-# Wighted accuracy assessment.
+# Weighted accuracy assessment.
 # Move to stationary PC for efficiency.
 
 # library(devtools)
@@ -19,6 +19,7 @@ library(dplyr)
 library(caret)
 library(tibble)
 library(corrplot)
+library(MASS)
 
 if (!exists("started")) {
   wd <- getwd()
@@ -156,6 +157,55 @@ write.table(
   row.names = FALSE
   )
 
+# Maps of observations
+
+
+tiff(
+  paste0(dir_results, "/fields_overview_v1_obs.tiff"),
+  width = 24, height = 16, units = "cm",
+  res = 300
+)
+
+par(mfrow = c(2, 2))
+
+for(i in 1:length(sitenames)) {
+  dir_cov <- paste0(dir_dat, sitenames[i], "/covariates/")
+  
+  if (sitenames[i] == "Vindum") {
+    obs <- dir_dat %>%
+      paste0(., sitenames[i], "/observations.gpkg") %>%
+      vect() %>%
+      filter(Depth == 25)
+  } else {
+    obs <- dir_dat %>%
+      paste0(., sitenames[i], "/observations.gpkg") %>%
+      vect()
+  }
+  
+  field_boundary <- dir_dat %>%
+    paste0(., sitenames[i], "/field_polygon.shp") %>%
+    vect()
+  
+  dem <- dir_cov %>%
+    paste0(., "dem_2m.tif") %>%
+    rast()
+  
+  plot(
+    dem,
+    main = sitenames[i],
+    plg = list(title="Elevation (m)")
+  )
+  
+  plot(field_boundary, add = TRUE)
+  
+  points(obs, pch = 21, bg = "white")
+}
+
+try(dev.off())
+try(dev.off())
+
+par()
+
 
 # Correlation with P
 
@@ -244,7 +294,7 @@ tiff(
 covobs_list %>%
   bind_rows() %>%
   ggplot(
-    aes(x = mean, y = P)
+    aes(x = DUALEM_PRP1m, y = P)
   ) +
   geom_point(shape = 21, bg = "white") +
   facet_wrap(~ Site, scales = "free", nrow = 2) +
@@ -441,6 +491,8 @@ names_cat_list <- lapply(
   ) %>% unlist()
 
 names_cat_list
+
+names_cat_sort <- names_cat_list[order(nchar(names_cat_list), names_cat_list)]
 
 var_combination_list <- lapply(
   var_indices,
@@ -870,86 +922,81 @@ maxdens_t <- 0.7
 
 # RMSE per method, plot for each site, line only (effect of n samples is small)
 
-tiff(
-  paste0(dir_results, "/RMSE_Site.tiff"),
-  width = 16, height = 10, units = "cm",
-  res = 300
-)
- 
-all_results %>%
-  filter(Target == "P") %>%
-  mutate(
-    R2 = case_when(
-      is.na(R2) ~ 0,
-      .default = R2
-    )
-  ) %>%
-  ggplot(aes(x = n_per_ha, y = RMSE, col = Layers)) +
-  facet_wrap(~ Site, scales = "free", nrow = 2) +
-  geom_point() +
-  geom_smooth(
-    # method = "lm",
-    # span = 1,
-    se = FALSE
+for (i in 1:4) {
+  myplot <- all_results %>%
+    filter(Target == vars_target[i]) %>%
+    mutate(
+      R2 = case_when(
+        is.na(R2) ~ 0,
+        .default = R2
+      ),
+      Layers = factor(Layers, levels = names_cat_sort)
+    ) %>%
+    ggplot(aes(x = n_per_ha, y = RMSE, col = Layers, linetype = Layers)) +
+    facet_wrap(~ Site, scales = "free", nrow = 2) +
+    # geom_point() +
+    geom_smooth(
+      # method = "lm",
+      # span = 1,
+      se = FALSE,
+      linewidth = 0.5
     ) +
-  xlab("n/ha")
-# +
-#   ylim(0, NA)
-
-try(dev.off())
-try(dev.off())
+    xlab("n/ha") +
+    ggtitle(vars_target[i])
+  
+  tiff(
+    paste0(dir_results, "/RMSE_Site_", vars_target[i], ".tiff"),
+    width = 16, height = 10, units = "cm",
+    res = 300
+  )
+  
+  print(myplot)
+  
+  try(dev.off())
+  try(dev.off())
+}
 
 # R2 per method, plot for each site, line only
 
-tiff(
-  paste0(dir_results, "/R2_Site.tiff"),
-  width = 16, height = 10, units = "cm",
-  res = 300
-)
+for (i in 1:4) {
+  myplot <- 
+    all_results %>%
+    filter(Target == vars_target[i]) %>%
+    mutate(
+      R2 = case_when(
+        is.na(R2) ~ 0,
+        .default = R2
+      ),
+      Layers = factor(Layers, levels = names_cat_sort)
+    ) %>%
+    ggplot(aes(x = n_per_ha, y = R2, col = Layers, linetype = Layers)) +
+    facet_wrap(~ Site, scales = "free", nrow = 2) +
+    # geom_point() +
+    geom_smooth(
+      # method = "lm",
+      # span = 1,
+      se = FALSE,
+      linewidth = 0.5
+    ) +
+    ylim(0, NA) +
+    ylab(bquote(R^2)) +
+    xlab("n/ha") +
+    ggtitle(vars_target[i])
+  
+  tiff(
+    paste0(dir_results, "/R2_Site_", vars_target[i],".tiff"),
+    width = 16, height = 10, units = "cm",
+    res = 300
+  )
+  
+  print(myplot)
+  
+  try(dev.off())
+  try(dev.off())
+}
 
-all_results %>%
-  filter(Target == "P") %>%
-  mutate(
-    R2 = case_when(
-      is.na(R2) ~ 0,
-      .default = R2
-    )
-  ) %>%
-  ggplot(aes(x = n_per_ha, y = R2, col = Layers)) +
-  facet_wrap(~ Site, scales = "free", nrow = 2) +
-  geom_point() +
-  geom_smooth(
-    # method = "lm",
-    # span = 1,
-    se = FALSE
-  ) +
-  ylim(0, NA) +
-  ylab(bquote(R^2)) +
-  xlab("n/ha")
 
-try(dev.off())
-try(dev.off())
-
-all_results %>%
-  filter(Target == "K") %>%
-  mutate(
-    R2 = case_when(
-      is.na(R2) ~ 0,
-      .default = R2
-    )
-  ) %>%
-  ggplot(aes(x = n_per_ha, y = R2, col = Layers)) +
-  facet_wrap(~ Site, scales = "free", nrow = 2) +
-  geom_smooth(
-    # method = "lm",
-    # span = 1,
-    se = FALSE
-  ) +
-  ylim(0, NA) +
-  ylab(bquote(R^2)) +
-  xlab("n/ha")
-
-# Violin plot for RMSE, 0.5 - 0.7 samples per ha
+# Violin/Box plot for RMSE, 0.5 - 0.7 samples per ha
 
 for (i in 1:4) {
   
@@ -959,7 +1006,8 @@ for (i in 1:4) {
       R2 = case_when(
         is.na(R2) ~ 0,
         .default = R2
-      )
+      ),
+      Layers = factor(Layers, levels = names_cat_sort)
     ) %>%
     # filter(RMSE < 2) %>%
     filter(
@@ -967,14 +1015,22 @@ for (i in 1:4) {
       n_per_ha > mindens_t
     ) %>%
     ggplot(aes(x = Layers, y = RMSE, fill = Layers)) +
-    geom_violin() +
-    facet_wrap(~ Site, nrow = 2, scales = "free_x") +
-    stat_summary(fun.y = mean, geom="point", size = 2) +
+    # geom_violin() +
+    geom_boxplot(outliers = FALSE) +
+    facet_wrap(~ Site, nrow = 2
+               # , scales = "free_x"
+               ) +
+    # stat_summary(fun.y = mean, geom="point", size = 2) +
     coord_flip() +
-    xlab(NULL)
+    xlab(NULL) +
+    ggtitle(vars_target[i]) +
+    theme(legend.position="none") +
+    ylim(0, NA) +
+    scale_x_discrete(limits=rev)
   
   tiff(
-    paste0(dir_results, "/Violin_RMSE_", vars_target[i], ".tiff"),
+    # paste0(dir_results, "/Violin_RMSE_", vars_target[i], ".tiff"),
+    paste0(dir_results, "/Boxplot_RMSE_", vars_target[i], ".tiff"),
     width = 16, height = 10, units = "cm",
     res = 300
   )
@@ -996,7 +1052,8 @@ for (i in 1:4) {
       R2 = case_when(
         is.na(R2) ~ 0,
         .default = R2
-      )
+      ),
+      Layers = factor(Layers, levels = names_cat_sort)
     ) %>%
     # filter(RMSE < 2) %>%
     filter(
@@ -1004,15 +1061,21 @@ for (i in 1:4) {
       n_per_ha > mindens_t
     ) %>%
     ggplot(aes(x = Layers, y = R2, fill = Layers)) +
-    geom_violin(, scale = "width", bounds = c(0, Inf)) +
-    facet_wrap(~ Site, nrow = 2, scales = "free_x") +
-    stat_summary(fun.y = mean, geom="point", size = 2) +
+    # geom_violin(, scale = "width", bounds = c(0, Inf)) +
+    geom_boxplot(outliers = FALSE) +
+    facet_wrap(~ Site, nrow = 2
+               # , scales = "free_x"
+               ) +
+    # stat_summary(fun.y = mean, geom="point", size = 2) +
     coord_flip() +
     ylab(bquote(R^2)) +
-    xlab(NULL)
+    xlab(NULL) +
+    scale_x_discrete(limits=rev) +
+    ggtitle(vars_target[i]) +
+    theme(legend.position="none")
     
   tiff(
-    paste0(dir_results, "/Violin_R2_", vars_target[i], ".tiff"),
+    paste0(dir_results, "/Boxplot_R2_", vars_target[i], ".tiff"),
     width = 16, height = 10, units = "cm",
     res = 300
   )
@@ -1023,11 +1086,6 @@ for (i in 1:4) {
   try(dev.off())
   
 }
-
-
-
-# +
-#   ylim(0, NA)
 
 # Calculate standardized accuracies, by field and target
 
@@ -1048,7 +1106,7 @@ acc_means_Sites <- all_results %>%
     RMSE_Site = mean(RMSE)
   )
 
-acc_means_Sites
+acc_means_Sites # Use this one
 
 acc_means_all <- acc_means_Sites %>%
   group_by(Target) %>%
@@ -1104,16 +1162,20 @@ acc_means_Layers_Sites <- all_results %>%
 
 acc_means_Layers_Sites
 
+acc_means_Sites_2 <- acc_means_Layers_Sites %>%
+  group_by(Site, Target) %>%
+  reframe(
+    R2_Site = mean(R2_lyrSite),
+    RMSE_Site = mean(RMSE_lyrSite)
+  )
+
+acc_means_Sites_2
+
 acc_summary_scalers <- acc_means_Layers_Sites %>%
-  left_join(., acc_means_Sites, by = join_by(Site, Target)) %>%
-  left_join(., acc_means_Layers, by = join_by(Layers, Target)) %>%
+  left_join(., acc_means_Sites_2, by = join_by(Site, Target)) %>%
   mutate(
-    # R2_Site_mult = R2_Site / acc_means_all[1],
-    # RMSE_Site_mult = RMSE_Site / acc_means_all[2],
-    R2_mult = R2_lyr / R2_lyrSite,
-    RMSE_mult = RMSE_lyr / RMSE_lyrSite
-    # R2_mult = R2_Site_mult * R2_lyr_mult,
-    # RMSE_mult = RMSE_Site_mult * RMSE_lyr_mult
+    R2_mult = 1 / R2_Site,
+    RMSE_mult = 1 / RMSE_Site 
   )
 
 acc_summary_scalers %>% as.data.frame()
@@ -1122,118 +1184,11 @@ acc_summary_scalers %>% as.data.frame()
 # Mean for each method should be the mean ACC for the method divided by the
 # overall mean acc
 
-# Standardized R2, one plot
-
-# all_results %>%
-#   mutate(
-#     R2 = case_when(
-#       is.na(R2) ~ 0,
-#       .default = R2
-#       )
-#   ) %>%
-#   right_join(., acc_means, by = "Site") %>%
-#   mutate(
-#     R2_scaled = R2 / R2_mean,
-#     RMSE_scaled = RMSE / RMSE_mean
-#   ) %>%
-#   ggplot(aes(x = n_per_ha, y = R2_scaled, col = Layers)) +
-#   # geom_point() +
-#   geom_smooth(
-#     # method = "lm"
-#     # se = FALSE
-#   ) +
-#   ylim(0, NA) +
-#   geom_vline(xintercept = mindens_t, linetype = "dashed") +
-#   geom_vline(xintercept = maxdens_t, linetype = "dashed")
-# 
-# # Standardized RMSE, one plot (kind of flat)
-# 
-# all_results %>%
-#   mutate(
-#     R2 = case_when(
-#       is.na(R2) ~ 0,
-#       .default = R2
-#     )
-#   ) %>%
-#   right_join(., acc_means, by = "Site") %>%
-#   mutate(
-#     R2_scaled = R2 / R2_mean,
-#     RMSE_scaled = RMSE / RMSE_mean
-#   ) %>%
-#   ggplot(aes(x = n_per_ha, y = RMSE_scaled, col = Layers)) +
-#   # geom_point() +
-#   geom_smooth(
-#     # method = "lm"
-#     # se = FALSE
-#   ) +
-#   # ylim(0, NA) +
-#   geom_vline(xintercept = mindens_t, linetype = "dashed") +
-#   geom_vline(xintercept = maxdens_t, linetype = "dashed")
-# 
-# # Standardized RMSE, by method, with points
-# 
-# all_results %>%
-#   mutate(
-#     R2 = case_when(
-#       is.na(R2) ~ 0,
-#       .default = R2
-#     )
-#   ) %>%
-#   right_join(., acc_means, by = "Site") %>%
-#   mutate(
-#     R2_scaled = R2 / R2_mean,
-#     RMSE_scaled = RMSE / RMSE_mean
-#   ) %>%
-#   ggplot(aes(x = n_per_ha, y = RMSE_scaled, col = Layers)) +
-#   facet_wrap(~ Layers, nrow = 2) +
-#   geom_point() +
-#   geom_smooth(
-#     col = "black"
-#     # method = "lm"
-#     # se = FALSE
-#   ) +
-#   # ylim(0, NA) +
-#   geom_vline(xintercept = mindens_t, linetype = "dashed") +
-#   geom_vline(xintercept = maxdens_t, linetype = "dashed")
-# 
-# # Standardized R2, by method, with points
-# 
-# all_results %>%
-#   mutate(
-#     R2 = case_when(
-#       is.na(R2) ~ 0,
-#       .default = R2
-#     )
-#   ) %>%
-#   right_join(., acc_means, by = "Site") %>%
-#   mutate(
-#     R2_scaled = R2 / R2_mean,
-#     RMSE_scaled = RMSE / RMSE_mean
-#   ) %>%
-#   ggplot(aes(x = n_per_ha, y = R2_scaled, col = Layers)) +
-#   facet_wrap(~ Layers, nrow = 2) +
-#   geom_point() +
-#   geom_smooth(
-#     col = "black"
-#     # method = "lm"
-#     # se = FALSE
-#   ) +
-#   geom_vline(xintercept = mindens_t, linetype = "dashed") +
-#   geom_vline(xintercept = maxdens_t, linetype = "dashed")
-
 # Using summary scalers
 
 # Standardized RMSE, using summary scalers, one plot
 
-tiff(
-  paste0(dir_results, "/RMSE_standardized.tiff"),
-  width = 16, height = 10, units = "cm",
-  res = 300
-)
-
-i <- 1
-
-all_results %>%
+results_scaled_summarised <- all_results %>%
   mutate(
     R2 = case_when(
       is.na(R2) ~ 0,
@@ -1245,118 +1200,264 @@ all_results %>%
     R2_scaled = R2*R2_mult,
     RMSE_scaled = RMSE*RMSE_mult
   ) %>%
-  ggplot(aes(x = n_per_ha, y = RMSE_scaled, col = Layers)) +
-  # geom_point() +
+  mutate(
+    dens_bin = cut(n_per_ha, breaks = seq(0.2, 2, by = 0.1))
+  ) %>%
+  filter(is.finite(dens_bin)) %>%
+  group_by(Site, Target, dens_bin, Layers) %>%
+  summarise(
+    R2_scaled = mean(R2_scaled),
+    RMSE_scaled = mean(RMSE_scaled)
+  ) %>%
+  group_by(Target, dens_bin, Layers) %>%
+  summarise(
+    R2_scaled = mean(R2_scaled),
+    RMSE_scaled = mean(RMSE_scaled)
+  ) %>% 
+  ungroup() %>%
+  mutate(
+    n_per_ha = as.numeric(dens_bin)/10 + 0.15,
+    Layers = factor(Layers, levels = names_cat_sort)
+  )
+
+tiff(
+  paste0(dir_results, "/RMSE_standardized_targ.tiff"),
+  width = 16, height = 10, units = "cm",
+  res = 300
+)
+
+results_scaled_summarised %>%
+  ggplot(
+    aes(x = n_per_ha,
+        y = RMSE_scaled,
+        col = Layers,
+        linetype = Layers
+        )
+    ) +
+  geom_point(bg = "white", pch = 21, size = 1) +
   geom_smooth(
-    # formula= (y ~ log(x)),
-    # method = "lm",
-    se = FALSE
+    se = FALSE,
+    linewidth = 0.5
   ) +
-  # ylim(0, NA) +
   geom_vline(xintercept = mindens_t, linetype = "dashed") +
   geom_vline(xintercept = maxdens_t, linetype = "dashed") +
   geom_vline(xintercept = 1) +
   xlab("n/ha") +
   ylab("Scaled RMSE") +
-  facet_wrap(vars(Target))
+  facet_wrap(vars(Target)) +
+  scale_x_continuous(
+    trans = "log2",
+    breaks = 2^seq(-2, 1, 1),
+    labels = fractions(
+      2^seq(-2, 1, 1)
+    )
+  )
 
 try(dev.off())
 try(dev.off())
 
 # Standardized R2, using summary scalers, one plot
 
+
 tiff(
-  paste0(dir_results, "/R2_standardized.tiff"),
+  paste0(dir_results, "/R2_standardized_targ.tiff"),
   width = 16, height = 10, units = "cm",
   res = 300
 )
 
-all_results %>%
-  mutate(
-    R2 = case_when(
-      is.na(R2) ~ 0,
-      .default = R2
+results_scaled_summarised %>%
+  ggplot(
+    aes(x = n_per_ha,
+        y = R2_scaled,
+        col = Layers,
+        linetype = Layers
     )
-  ) %>%
-  right_join(., acc_summary_scalers, by = c("Site", "Layers")) %>%
-  mutate(
-    R2_scaled = R2*R2_mult,
-    RMSE_scaled = RMSE*RMSE_mult
-  ) %>%
-  ggplot(aes(x = n_per_ha, y = R2_scaled, col = Layers)) +
-  # geom_point() +
-  geom_smooth(
-    # formula = (y ~ log(x)),
-    # method = "lm"
-    # se = FALSE
   ) +
-  # ylim(0, NA) +
-  geom_vline(xintercept = mindens_t, linetype = "dashed") +
-  geom_vline(xintercept = maxdens_t, linetype = "dashed") +
-  geom_vline(xintercept = 1) +
-  ylab(bquote("Scaled"~R^2)) +
-  xlab("n/ha")
-
-try(dev.off())
-try(dev.off())
-
-# Standardized RMSE, by method, with points, using summary scalers
-
-all_results %>%
-  mutate(
-    R2 = case_when(
-      is.na(R2) ~ 0,
-      .default = R2
-    )
-  ) %>%
-  right_join(., acc_summary_scalers, by = c("Site", "Layers")) %>%
-  mutate(
-    R2_scaled = R2*R2_mult,
-    RMSE_scaled = RMSE*RMSE_mult
-  ) %>%
-  ggplot(aes(x = log(n_per_ha), y = log(RMSE_scaled), col = Layers)) +
-  facet_wrap(~ Layers, nrow = 2) +
-  geom_point() +
+  geom_point(bg = "white", pch = 21, size = 1) +
   geom_smooth(
-    col = "black",
-    # formula= (y ~ log(x)),
-    # formula = y ~ log(x),
-    method = "lm"
-    # se = FALSE
-  ) +
-  ylim(0, NA) +
-  geom_vline(xintercept = mindens_t, linetype = "dashed") +
-  geom_vline(xintercept = maxdens_t, linetype = "dashed") +
-  xlab("n/ha")
-
-# Standardized R2, by method, with points, using summary scalers
-
-all_results %>%
-  mutate(
-    R2 = case_when(
-      is.na(R2) ~ 0,
-      .default = R2
-    )
-  ) %>%
-  right_join(., acc_summary_scalers, by = c("Site", "Layers")) %>%
-  mutate(
-    R2_scaled = R2*R2_mult,
-    RMSE_scaled = RMSE*RMSE_mult
-  ) %>%
-  ggplot(aes(x = n_per_ha, y = R2_scaled, col = Layers)) +
-  facet_wrap(~ Layers, nrow = 2) +
-  geom_point() +
-  geom_smooth(
-    col = "black"
-    # formula= (y ~ log(x)),
-    # method = "lm"
-    # se = FALSE
+    se = FALSE,
+    linewidth = 0.5
   ) +
   geom_vline(xintercept = mindens_t, linetype = "dashed") +
   geom_vline(xintercept = maxdens_t, linetype = "dashed") +
   geom_vline(xintercept = 1) +
-  ylab(bquote(R^2)) +
-  xlab("n/ha")
+  xlab("n/ha") +
+  ylab("Scaled R2") +
+  facet_wrap(vars(Target)) +
+  scale_x_continuous(
+    trans = "log2",
+    breaks = 2^seq(-2, 1, 1),
+    labels = fractions(
+      2^seq(-2, 1, 1)
+    )
+  )
+
+try(dev.off())
+try(dev.off())
+
+
+# Calculate effects of specific covariates
+
+strsplit(all_results$vars_used, "[+]")
+
+is_finite_num <- function(x) {
+  out <- 1 - is.na(x)
+  return(out)
+}
+
+vars_used_df <- all_results %>%
+  separate_longer_delim(
+    vars_used,
+    "+"
+  ) %>%
+  pivot_wider(
+    id_cols = c(Site, Rep, Target, Layers, n),
+    values_from = vars_used,
+    names_from = vars_used
+  ) %>%
+  mutate(across(any_of(names(covariates)), is_finite_num)) %>%
+  dplyr::select(any_of(names(covariates)))
+
+vars_used_df
+
+get_perc <- function(x) {
+  mean(x)*100
+}
+
+all_results %>%
+  bind_cols(vars_used_df) %>%
+  filter(
+    n_per_ha < maxdens_t,
+    n_per_ha > mindens_t
+  ) %>%
+  group_by(
+    Site, Target, Layers
+  ) %>%
+  summarise(
+    across(any_of(names(covariates)), get_perc)
+  ) %>%
+  pivot_longer(
+    any_of(names(covariates)),
+    names_to = "Layer",
+    values_to = "Frequency"
+  ) %>%
+  filter(
+    Frequency > 0
+  ) %>%
+  group_by(Site, Target, Layers) %>%
+  arrange(Site, Target, Layers, -Frequency) %>%
+  as.data.frame()
+
+
+all_results %>%
+  bind_cols(vars_used_df) %>%
+  filter(
+    n_per_ha < maxdens_t,
+    n_per_ha > mindens_t
+  ) %>%
+  group_by(
+    Site, Target, Layers
+  ) %>%
+  summarise(
+    across(any_of(names(covariates)), get_perc)
+  ) %>%
+  pivot_longer(
+    any_of(names(covariates)),
+    names_to = "Layer",
+    values_to = "Frequency"
+  ) %>%
+  filter(
+    Frequency > 0
+  ) %>%
+  group_by(Site, Target, Layer) %>%
+  summarise(Frequency = mean(Frequency)) %>%
+  group_by(Target, Layer) %>%
+  summarise(Frequency = mean(Frequency)) %>%
+  arrange(Target, -Frequency) %>%
+  as.data.frame()
+  
+names_cov_used <- names(covariates)[names(covariates) %in% colnames(vars_used_df)]
+
+acc_diff_sum <- lapply(
+  1:length(names_cov_used),
+  function(x) {
+    df_0 <- all_results %>%
+      bind_cols(vars_used_df) %>%
+      filter(
+        n_per_ha < maxdens_t,
+        n_per_ha > mindens_t,
+        .data[[names_cov_used[x]]] == 0
+      ) %>%
+      group_by(
+        Site, Target,
+      ) %>%
+      summarise(
+        R2_0 = mean(R2),
+        RMSE_0 = mean(RMSE)
+      )
+    
+    df_1 <- all_results %>%
+      bind_cols(vars_used_df) %>%
+      filter(
+        n_per_ha < maxdens_t,
+        n_per_ha > mindens_t,
+        .data[[names_cov_used[x]]] == 1
+      ) %>%
+      group_by(
+        Site, Target,
+      ) %>%
+      summarise(
+        R2_1 = mean(R2),
+        RMSE_1 = mean(RMSE)
+      )
+    
+    out <- bind_cols(
+      df_0, df_1[, 3:4]
+    ) %>%
+      mutate(
+        R2_diff = R2_1 - R2_0,
+        RMSE_diff = RMSE_1 - RMSE_0,
+        Layer = names_cov_used[x]
+      ) %>%
+      dplyr::select(Site, Target, Layer, R2_diff, RMSE_diff)
+    
+    return(out)
+  }
+  ) %>%
+  bind_rows() %>%
+  group_by(
+    Target, Layer
+  ) %>%
+  summarise(
+    R2_diff = mean(R2_diff),
+    RMSE_diff = mean(RMSE_diff)
+  )
+
+acc_diff_sum %>%
+  arrange(Target, -R2_diff) %>%
+  as.data.frame()
+
+acc_diff_sum %>%
+  filter(
+    R2_diff > 0,
+    RMSE_diff < 0
+  ) %>%
+  arrange(Target, -R2_diff) %>%
+  as.data.frame()
+
+best_cov <- acc_diff_sum %>%
+  filter(
+    R2_diff > 0,
+    RMSE_diff < 0
+  ) %>%
+  ungroup() %>%
+  dplyr::select(Layer) %>%
+  unlist() %>%
+  unique()
+  
+covariates %>%
+  subset(best_cov) %>%
+  plot()
 
 # To do:
 # Make maps for XY+TOPO, 1 sample per 2 ha, for each site.
