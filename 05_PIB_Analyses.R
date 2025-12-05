@@ -247,7 +247,7 @@ for(i in 1:length(sitenames)) {
   
   obs_cov <- terra::extract(covariates, obs, bind = TRUE) %>%
     values() %>%
-    select(any_of(c("P", names(covariates)))) %>%
+    dplyr::select(any_of(c("P", names(covariates)))) %>%
     drop_na() %>%
     mutate(Site = sitenames[i])
   
@@ -342,9 +342,9 @@ covcor_list <- covobs_list %>%
   lapply(
     function(x) {
       out <- x %>%
-        select(any_of(cor_list2$rowname)) %>%
+        dplyr::select(any_of(cor_list2$rowname)) %>%
         # select(any_of(vars_TOPO_top10)) %>%
-        select(-any_of(c("curvature_flow_line", "curvature_total"))) %>%
+        dplyr::select(-any_of(c("curvature_flow_line", "curvature_total"))) %>%
         cor()
       return(out)
     }
@@ -361,7 +361,7 @@ cor_list2 %>%
   left_join(covcor_mean %>%
               as.data.frame() %>%
               rownames_to_column(), "rowname") %>%
-  select(rowname, mean_2, position_topographic_multi) %>%
+  dplyr::select(rowname, mean_2, position_topographic_multi) %>%
   mutate(index = mean_2*(1 - abs(position_topographic_multi))) %>%
   arrange(-index)
 
@@ -377,7 +377,7 @@ cor_list2 %>%
   left_join(covcor_mean %>%
               as.data.frame() %>%
               rownames_to_column(), "rowname") %>%
-  select(rowname,
+  dplyr::select(rowname,
          mean_2,
          position_topographic_multi,
          channel_base_level
@@ -406,7 +406,7 @@ cor_list2 %>%
   left_join(covcor_mean %>%
               as.data.frame() %>%
               rownames_to_column(), "rowname") %>%
-  select(rowname,
+  dplyr::select(rowname,
          mean_2,
          position_topographic_multi,
          channel_base_level,
@@ -437,11 +437,11 @@ vars_TOPO <- c(
 )
 
 covariates %>%
-  select(any_of(vars_DSM10m)) %>%
+  dplyr::select(any_of(vars_DSM10m)) %>%
   plot()
 
 covariates %>%
-  select(any_of(vars_TOPO)) %>%
+  dplyr::select(any_of(vars_TOPO)) %>%
   plot()
 
 vars_xy <- c("UTMX", "UTMY")
@@ -449,7 +449,7 @@ vars_xy <- c("UTMX", "UTMY")
 vars_sensor <- c("DUALEM_PRP1m", "Gamma_Countrate")  # To be added
 
 covariates %>%
-  select(any_of(vars_sensor)) %>%
+  dplyr::select(any_of(vars_sensor)) %>%
   plot()
 
 varlist <- list(
@@ -584,7 +584,7 @@ n_sample_sizes_rep <- 10
 #       filter(is.finite(P))
 #   }
 # 
-#   obs %<>% select(-any_of(c("UTMX", "UTMY")))
+#   obs %<>% dplyr::select(-any_of(c("UTMX", "UTMY")))
 # 
 #   cov_files <- dir_cov %>%
 #     list.files(pattern = ".tif", full.names = TRUE) %>%
@@ -597,7 +597,7 @@ n_sample_sizes_rep <- 10
 #   names(covariates) <- cov_names
 # 
 #   obs_cov <- terra::extract(covariates, obs, bind = TRUE) %>%
-#     select(any_of(c("ID", vars_target, names(covariates)))) %>%
+#     dplyr::select(any_of(c("ID", vars_target, names(covariates)))) %>%
 #     drop_na()
 # 
 #   field_boundary <- dir_dat %>%
@@ -657,7 +657,7 @@ n_sample_sizes_rep <- 10
 #         set.seed(seeds[j])
 # 
 #         myclusters_v <- obs_cov_train %>%
-#           select(any_of(var_combination_list[[k]])) %>%
+#           dplyr::select(any_of(var_combination_list[[k]])) %>%
 #           sample_kmeans(
 #             input = .,
 #             clusters = n_j,
@@ -669,7 +669,7 @@ n_sample_sizes_rep <- 10
 # 
 #         traindata <- obs_cov_train[myclusters_v$points$Index, ] %>%
 #           values() %>%
-#           select(any_of(c(vars_target, var_combination_list[[k]])))
+#           dplyr::select(any_of(c(vars_target, var_combination_list[[k]])))
 #         
 #         for (l in 1:length(vars_target)) {
 #           targ <- vars_target[l]
@@ -682,7 +682,7 @@ n_sample_sizes_rep <- 10
 #             mutate(
 #               upper = mean + 3*sd
 #             ) %>%
-#             select("upper") %>%
+#             dplyr::select("upper") %>%
 #             unlist() %>%
 #             unname()
 #           
@@ -753,7 +753,7 @@ n_sample_sizes_rep <- 10
 #                 arrange(-Overall) %>%
 #                 rownames_to_column() %>%
 #                 filter(!(rowname %in% vars_xy)) %>%
-#                 select(rowname) %>%
+#                 dplyr::select(rowname) %>%
 #                 unlist() %>%
 #                 unname() %>%
 #                 c(vars_xy, .)
@@ -764,7 +764,7 @@ n_sample_sizes_rep <- 10
 #               vars_ordered <- varImp(ttt0)$importance %>%
 #                 arrange(-Overall) %>%
 #                 rownames_to_column() %>%
-#                 select(rowname) %>%
+#                 dplyr::select(rowname) %>%
 #                 unlist() %>%
 #                 unname()
 #             }
@@ -849,7 +849,7 @@ n_sample_sizes_rep <- 10
 #             predict(ttt, .)
 #           
 #           val_obs_pred <- obs_cov_val %>%
-#             select(any_of(targ)) %>%
+#             dplyr::select(any_of(targ)) %>%
 #             values() %>%
 #             mutate(pred = val_p) %>%
 #             na.omit()
@@ -1295,6 +1295,35 @@ results_scaled_summarised %>%
 try(dev.off())
 try(dev.off())
 
+# Mean RMSE and R2 for P, across sites, for all methods
+
+all_results %>%
+  filter(Target == "P") %>%
+  mutate(
+    R2 = case_when(
+      is.na(R2) ~ 0,
+      .default = R2
+    ),
+    Layers = factor(Layers, levels = names_cat_sort)
+  ) %>%
+  # filter(RMSE < 2) %>%
+  filter(
+    n_per_ha < maxdens_t,
+    n_per_ha > mindens_t
+  ) %>%
+  group_by(
+    Site, Layers
+  ) %>%
+  summarise(
+    R2 = mean(R2),
+    RMSE = mean(RMSE)
+  ) %>%
+  group_by(Layers) %>%
+  summarise(
+    R2 = mean(R2),
+    RMSE = mean(RMSE)
+  )
+
 
 # Calculate effects of specific covariates
 
@@ -1369,7 +1398,7 @@ all_results %>%
   filter(
     Frequency > 0
   ) %>%
-  group_by(Site, Target, Layer) %>%
+  group_by(Site, Target, Layer, Layers) %>%
   summarise(Frequency = mean(Frequency)) %>%
   group_by(Target, Layer) %>%
   summarise(Frequency = mean(Frequency)) %>%
@@ -1389,7 +1418,7 @@ acc_diff_sum <- lapply(
         .data[[names_cov_used[x]]] == 0
       ) %>%
       group_by(
-        Site, Target,
+        Site, Target, Layers
       ) %>%
       summarise(
         R2_0 = mean(R2),
@@ -1404,29 +1433,29 @@ acc_diff_sum <- lapply(
         .data[[names_cov_used[x]]] == 1
       ) %>%
       group_by(
-        Site, Target,
+        Site, Target, Layers
       ) %>%
       summarise(
         R2_1 = mean(R2),
         RMSE_1 = mean(RMSE)
       )
     
-    out <- bind_cols(
-      df_0, df_1[, 3:4]
+    out <- left_join(
+      x = df_0, y = df_1, by = c("Site", "Target", "Layers")
     ) %>%
       mutate(
         R2_diff = R2_1 - R2_0,
         RMSE_diff = RMSE_1 - RMSE_0,
         Layer = names_cov_used[x]
       ) %>%
-      dplyr::select(Site, Target, Layer, R2_diff, RMSE_diff)
+      dplyr::select(Site, Target, Layer, Layers, R2_diff, RMSE_diff)
     
     return(out)
   }
   ) %>%
   bind_rows() %>%
   group_by(
-    Target, Layer
+    Target, Layer, Layers
   ) %>%
   summarise(
     R2_diff = mean(R2_diff),
@@ -1442,7 +1471,7 @@ acc_diff_sum %>%
     R2_diff > 0,
     RMSE_diff < 0
   ) %>%
-  arrange(Target, -R2_diff) %>%
+  arrange(Target, Layers, -R2_diff) %>%
   as.data.frame()
 
 best_cov <- acc_diff_sum %>%
@@ -1455,31 +1484,65 @@ best_cov <- acc_diff_sum %>%
   unlist() %>%
   unique()
   
+best_cov_P <- acc_diff_sum %>%
+  filter(
+    Target == "P",
+    R2_diff > 0,
+    RMSE_diff < 0
+  ) %>%
+  ungroup() %>%
+  dplyr::select(Layer) %>%
+  unlist() %>%
+  unique()
+
+best_cov_P
+
+tiff(
+  paste0(dir_results, "/best_covariates_P.tiff"),
+  width = 26, height = 20, units = "cm",
+  res = 300
+)
+
 covariates %>%
-  subset(best_cov) %>%
+  subset(best_cov_P) %>%
   plot()
+
+try(dev.off())
+try(dev.off())
 
 # To do:
 # Make maps for XY+TOPO, 1 sample per 2 ha, for each site.
 # Find the most important variables + effect of sample density
 
-# Map from last model
+# Example of k-means clustering
 
-pred_r <- predict(covariates, ttt, na.rm = TRUE)
-
-plot(
-  pred_r,
-  main = "last model"
+sample_example <- sample_kmeans(
+  covariates %>%
+    subset(best_cov_P),
+  10, 
+  pca = TRUE
 )
+
+tiff(
+  paste0(dir_results, "/sample_example.tiff"),
+  width = 16, height = 10, units = "cm",
+  res = 300
+)
+
+plot(sample_example$clusters)
+points(sample_example$points, pch = 21, bg = "white")
+
+try(dev.off())
+try(dev.off())
 
 # Example maps
 
-my_method <- "gam"
+my_method <- "gaussprPoly"
 
 ttt2 <- train(
   as.formula(paste("P ~",
-                   paste(vars_use, collapse = "+"))),
-  traindata,
+                   paste(best_cov_P, collapse = "+"))),
+  obs_cov,
   method = my_method,
   preProcess = "pca",
   trControl = trainControl(method = "cv", number = 5)
@@ -1487,14 +1550,22 @@ ttt2 <- train(
 
 ttt2
 
-pred_r <- predict(covariates, ttt, na.rm = TRUE)
+pred_r <- predict(covariates, ttt2, na.rm = TRUE)
+
+
+tiff(
+  paste0(dir_results, "/P_map_example.tiff"),
+  width = 16, height = 10, units = "cm",
+  res = 300
+)
 
 plot(
   pred_r,
-  main = my_method
-  )
+  main = "Kortlagt P-tal"
+)
 
-
+try(dev.off())
+try(dev.off())
 
 # New features for k-means sampler:
 ## 1: Candidate points (clusters based on raster, only select points from set)
