@@ -1516,12 +1516,21 @@ try(dev.off())
 
 # Example of k-means clustering
 
+mycandidates <- (sum(covariates)*0 + 1) %>%
+  focal(w = 9, na.rm = FALSE)
+
+set.seed(1)
+
 sample_example <- sample_kmeans(
   covariates %>%
     subset(best_cov_P),
   10, 
-  pca = TRUE
+  pca = TRUE,
+  use_xy = TRUE,
+  candidates = mycandidates
 )
+
+library(tidyterra)
 
 tiff(
   paste0(dir_results, "/sample_example.tiff"),
@@ -1529,8 +1538,20 @@ tiff(
   res = 300
 )
 
-plot(sample_example$clusters)
-points(sample_example$points, pch = 21, bg = "white")
+autoplot(as.factor(sample_example$clusters)) +
+  scale_fill_whitebox_d(
+    palette = "viridi"
+  ) +
+  geom_spatvector(
+    data = vect(
+      sample_example$points, 
+      geom = c("x", "y"),
+      crs = crs(sample_example$clusters)
+    ),
+    pch = 21,
+    fill = "white"
+  ) + 
+  guides(fill = guide_legend(title = "Zone"))
 
 try(dev.off())
 try(dev.off())
